@@ -9,17 +9,22 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. Note: the task list won't load/save yet until
-you connect a KV store (see below) — that's expected locally.
+Open http://localhost:3000.
+
+For shared save/load against the real Supabase store: link the Vercel
+`cleaner` project, pull env vars, then run the app:
+
+```
+npx vercel link --project cleaner
+npx vercel env pull .env.local
+npm run dev
+```
 
 ## Deploy
 
-1. Push this folder to a GitHub repo.
-2. Import it into Vercel (vercel.com → Add New Project → pick the repo → Deploy).
-3. In the Vercel project → **Storage** tab → **Create Database** → **KV**.
-   Connect it to this project. Vercel adds the required env vars automatically.
-4. Redeploy if it doesn't happen automatically. Done — open the URL on both
-   phones and add it to your Home Screens.
+The production app is the Vercel project **cleaner**
+(https://cleaner-silk.vercel.app), with **Supabase** connected under
+Storage. Tasks and History are stored in the `app_state` table
+(`home-rota:tasks`, `home-rota:history`).
 
-For local testing against the real shared store: `vercel link`, then
-`vercel env pull .env.local`, then `npm run dev`.
+Push to `main` on the connected GitHub repo to deploy.
