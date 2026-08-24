@@ -13,7 +13,7 @@ const GRAD = "linear-gradient(135deg,#3b82f6,#ec4899)";
 
 type Assignee = "you" | "partner" | "both";
 type PersonFilter = "all" | "you" | "partner" | "both";
-type Tab = "rota" | "people";
+type Tab = "rota" | "history";
 
 type Task = {
   id: number;
@@ -21,37 +21,18 @@ type Task = {
   room: string;
   assignee: Assignee;
   notes: string;
+  /** Set when completed this week; archived to history on weekly reset. */
   completedAt: number | null;
-  /** Start-of-day ms for the due date. */
-  dueAt?: number | null;
 };
 
-function startOfDay(d = new Date()) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function dueAtFromOffset(days: number) {
-  const d = startOfDay();
-  d.setDate(d.getDate() + days);
-  return d.getTime();
-}
-
-function daysUntilDue(dueAt: number | null | undefined) {
-  if (dueAt == null) return 2;
-  const today = startOfDay().getTime();
-  const due = startOfDay(new Date(dueAt)).getTime();
-  return Math.round((due - today) / 86400000);
-}
-
-function dueLabel(days: number, done: boolean) {
-  if (done) return "Done";
-  if (days < 0) return `${-days}d overdue`;
-  if (days === 0) return "Due today";
-  if (days === 1) return "Due tomorrow";
-  return `Due in ${days}d`;
-}
+type HistoryEntry = {
+  /** Unique key so the same chore can appear more than once over time. */
+  key: string;
+  title: string;
+  room: string;
+  assignee: Assignee;
+  completedAt: number;
+};
 
 function startOfWeek() {
   const d = new Date();
@@ -70,24 +51,40 @@ function daysUntilReset() {
   return Math.max(1, Math.ceil(ms / 86400000));
 }
 
+/** British short date, e.g. 27/07/2025 */
+function formatCompletedDate(ms: number) {
+  const d = new Date(ms);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function assigneeName(a: Assignee) {
+  if (a === "both") return "Both";
+  return NAMES[a];
+}
+
 const seedTasks: Task[] = [
-  { id: 1, title: "Hoover downstairs", room: "Lounge", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null, dueAt: dueAtFromOffset(0) },
-  { id: 2, title: "Clean the hob", room: "Kitchen", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(1) },
-  { id: 3, title: "Bins out", room: "General", assignee: "both", notes: "Recycling is fortnightly.", completedAt: null, dueAt: dueAtFromOffset(-1) },
-  { id: 4, title: "Change bedsheets", room: "Bedroom", assignee: "you", notes: "", completedAt: Date.now(), dueAt: dueAtFromOffset(3) },
-  { id: 5, title: "Water the plants", room: "Garden", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(2) },
-  { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null, dueAt: dueAtFromOffset(-2) },
-  { id: 7, title: "Stack the dishwasher", room: "Kitchen", assignee: "you", notes: "", completedAt: null, dueAt: dueAtFromOffset(0) },
-  { id: 8, title: "Tidy the sofa cushions", room: "Lounge", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(4) },
+  { id: 1, title: "Hoover downstairs", room: "Lounge", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null },
+  { id: 2, title: "Clean the hob", room: "Kitchen", assignee: "partner", notes: "", completedAt: null },
+  { id: 3, title: "Bins out", room: "General", assignee: "both", notes: "Recycling is fortnightly.", completedAt: null },
+  { id: 4, title: "Change bedsheets", room: "Bedroom", assignee: "you", notes: "", completedAt: Date.now() },
+  { id: 5, title: "Water the plants", room: "Garden", assignee: "partner", notes: "", completedAt: null },
+  { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null },
+  { id: 7, title: "Stack the dishwasher", room: "Kitchen", assignee: "you", notes: "", completedAt: null },
+  { id: 8, title: "Tidy the sofa cushions", room: "Lounge", assignee: "partner", notes: "", completedAt: null },
 ];
 
-/** Migrate older room/title strings from persisted state. */
+/** Migrate older room/title strings from persisted state. Drop unused dueAt. */
 function normalizeTasks(tasks: Task[]): Task[] {
-  return tasks.map((t) => ({
-    ...t,
-    room: t.room === "Living Room" ? "Lounge" : t.room,
-    title: t.title === "Load the dishwasher" ? "Stack the dishwasher" : t.title,
-  }));
+  return tasks.map((t) => {
+    const { dueAt: _dueAt, ...rest } = t as Task & { dueAt?: unknown };
+    return {
+      ...rest,
+      room: rest.room === "Living Room" ? "Lounge" : rest.room,
+      title: rest.title === "Load the dishwasher" ? "Stack the dishwasher" : rest.title,
+    };
+  });
 }
 
 function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefObject<boolean>) {
@@ -135,7 +132,7 @@ function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefO
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, loaded, key]);
 
-  return [value, setValue] as const;
+  return [value, setValue, loaded] as const;
 }
 
 function ProgressRing({
@@ -217,11 +214,21 @@ function AvatarButton({
 }: {
   assignee: Assignee;
   done: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }) {
   const letter = assignee === "both" ? "B" : assignee === "you" ? "T" : "R";
-  const bg =
-    assignee === "you" ? TOM : assignee === "partner" ? ROSIE : GRAD;
+  const bg = assignee === "you" ? TOM : assignee === "partner" ? ROSIE : GRAD;
+  const className =
+    "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white";
+  const style = { background: bg, opacity: done ? 0.45 : 1 };
+
+  if (!onClick) {
+    return (
+      <div className={className} style={style} title={assigneeName(assignee)}>
+        {letter}
+      </div>
+    );
+  }
 
   return (
     <button
@@ -230,9 +237,9 @@ function AvatarButton({
         e.stopPropagation();
         onClick();
       }}
-      className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
-      style={{ background: bg, opacity: done ? 0.45 : 1 }}
-      title={assignee === "both" ? "Both" : NAMES[assignee]}
+      className={className}
+      style={style}
+      title={assigneeName(assignee)}
       aria-label={`Reassign (${letter})`}
     >
       {letter}
@@ -242,11 +249,9 @@ function AvatarButton({
 
 function Checkbox({
   done,
-  overdue,
   onClick,
 }: {
   done: boolean;
-  overdue: boolean;
   onClick: () => void;
 }) {
   return (
@@ -262,7 +267,7 @@ function Checkbox({
           ? { background: GRAD, border: 0, color: "#fff" }
           : {
               background: "var(--checkbox-bg)",
-              border: `1.5px solid ${overdue ? "var(--checkbox-overdue)" : "var(--checkbox-border)"}`,
+              border: "1.5px solid var(--checkbox-border)",
               color: "transparent",
             }
       }
@@ -276,24 +281,18 @@ function Checkbox({
 function ChoreRow({
   task,
   done,
-  days,
   onToggle,
   onCycle,
   onDelete,
   onOpenNotes,
-  compact,
 }: {
   task: Task;
   done: boolean;
-  days: number;
   onToggle: () => void;
   onCycle: () => void;
   onDelete?: () => void;
   onOpenNotes?: () => void;
-  compact?: boolean;
 }) {
-  const overdue = days < 0 && !done;
-  const label = dueLabel(days, done);
   const x = useMotionValue(0);
   const greenOpacity = useTransform(x, [0, 170], [0, 1]);
   const redOpacity = useTransform(x, [-170, 0], [1, 0]);
@@ -312,55 +311,6 @@ function ChoreRow({
     } else {
       animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
     }
-  }
-
-  const body = (
-    <>
-      <Checkbox done={done} overdue={overdue} onClick={onToggle} />
-      <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
-        <div
-          className="truncate text-[15px] font-medium"
-          style={{
-            color: done ? "var(--disabled)" : "var(--text)",
-            textDecoration: done ? "line-through" : "none",
-          }}
-        >
-          {task.title}
-        </div>
-        <div
-          className="mt-[3px] text-[11.5px] font-normal"
-          style={{
-            color: compact
-              ? "var(--pink-label)"
-              : overdue
-                ? ROSIE
-                : done
-                  ? "var(--due-done)"
-                  : "var(--muted)",
-          }}
-        >
-          {compact ? `${label} · ${task.room}` : label}
-        </div>
-      </button>
-      {!compact && task.notes && onOpenNotes && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenNotes();
-          }}
-          className="shrink-0 text-[var(--dim)]"
-          aria-label="Notes"
-        >
-          <StickyNote size={15} />
-        </button>
-      )}
-      <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
-    </>
-  );
-
-  if (compact) {
-    return <div className="flex items-center gap-3 py-[7px]">{body}</div>;
   }
 
   return (
@@ -386,14 +336,40 @@ function ChoreRow({
         style={{
           x,
           background: "var(--row)",
-          boxShadow: overdue
-            ? `inset 3px 0 0 ${ROSIE}, var(--card-shadow)`
-            : "var(--card-shadow)",
+          boxShadow: "var(--card-shadow)",
         }}
         onDragEnd={handleDragEnd}
         className="relative z-10 flex min-h-[56px] cursor-grab items-center gap-[13px] rounded-2xl px-[15px] py-[13px] active:cursor-grabbing"
       >
-        {body}
+        <Checkbox done={done} onClick={onToggle} />
+        <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
+          <div
+            className="truncate text-[15px] font-medium"
+            style={{
+              color: done ? "var(--disabled)" : "var(--text)",
+              textDecoration: done ? "line-through" : "none",
+            }}
+          >
+            {task.title}
+          </div>
+          {done && (
+            <div className="mt-[3px] text-[11.5px] font-normal text-[var(--due-done)]">Done</div>
+          )}
+        </button>
+        {task.notes && onOpenNotes && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenNotes();
+            }}
+            className="shrink-0 text-[var(--dim)]"
+            aria-label="Notes"
+          >
+            <StickyNote size={15} />
+          </button>
+        )}
+        <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
       </motion.div>
     </motion.div>
   );
@@ -409,11 +385,15 @@ export default function ChoreApp() {
     pausedRef.current = showAdd || !!activeTask;
   }, [showAdd, activeTask]);
 
-  const [tasks, setTasks] = useSharedState<Task[]>("tasks", seedTasks, pausedRef);
+  const [tasks, setTasks, tasksLoaded] = useSharedState<Task[]>("tasks", seedTasks, pausedRef);
+  const [history, setHistory, historyLoaded] = useSharedState<HistoryEntry[]>("history", [], pausedRef);
 
-  // One-shot migration for older persisted room/title strings.
+  // One-shot migration for older persisted room/title/due fields.
   useEffect(() => {
-    if (!tasks.some((t) => t.room === "Living Room" || t.title === "Load the dishwasher")) return;
+    const needs = tasks.some(
+      (t) => t.room === "Living Room" || t.title === "Load the dishwasher" || "dueAt" in t
+    );
+    if (!needs) return;
     setTasks(normalizeTasks(tasks));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks]);
@@ -426,8 +406,34 @@ export default function ChoreApp() {
     assignee: "you" as Assignee,
   });
 
+  // Soft weekly boundary: done this week stays ticked; incomplete jobs carry over.
+  // On reset, completed jobs leave the rota and are written to history.
   const weekStart = useMemo(() => startOfWeek().getTime(), []);
   const isDone = (t: Task) => !!(t.completedAt && t.completedAt >= weekStart);
+
+  useEffect(() => {
+    if (!tasksLoaded || !historyLoaded) return;
+    const toArchive = tasks.filter((t) => t.completedAt != null && t.completedAt < weekStart);
+    if (toArchive.length === 0) return;
+
+    setTasks((ts) => ts.filter((t) => !(t.completedAt != null && t.completedAt < weekStart)));
+    setHistory((h) => {
+      const existing = new Set(h.map((e) => e.key));
+      const additions: HistoryEntry[] = toArchive
+        .filter((t): t is Task & { completedAt: number } => t.completedAt != null)
+        .map((t) => ({
+          key: `${t.id}-${t.completedAt}`,
+          title: t.title,
+          room: t.room,
+          assignee: t.assignee,
+          completedAt: t.completedAt,
+        }))
+        .filter((e) => !existing.has(e.key));
+      if (additions.length === 0) return h;
+      return [...additions, ...h].sort((a, b) => b.completedAt - a.completedAt);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, tasksLoaded, historyLoaded, weekStart]);
 
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
@@ -458,16 +464,6 @@ export default function ChoreApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, weekStart]);
 
-  const overdueTasks = useMemo(
-    () =>
-      filtered.filter((t) => {
-        if (isDone(t)) return false;
-        return daysUntilDue(t.dueAt) < 0;
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filtered, weekStart]
-  );
-
   const stats = useMemo(() => {
     const mine = (who: "you" | "partner") =>
       tasks.filter((t) => t.assignee === who || t.assignee === "both");
@@ -483,6 +479,11 @@ export default function ChoreApp() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, weekStart]);
+
+  const sortedHistory = useMemo(
+    () => [...history].sort((a, b) => b.completedAt - a.completedAt),
+    [history]
+  );
 
   function toggleDone(id: number) {
     setTasks((ts) =>
@@ -514,7 +515,6 @@ export default function ChoreApp() {
         assignee: form.assignee,
         notes: "",
         completedAt: null,
-        dueAt: dueAtFromOffset(2),
       },
     ]);
     setForm({ title: "", room: form.room, assignee: "you" });
@@ -627,35 +627,6 @@ export default function ChoreApp() {
               })}
             </div>
 
-            {/* Overdue */}
-            {overdueTasks.length > 0 && (
-              <div
-                className="mx-[22px] mb-1 mt-1.5 rounded-[18px] px-[15px] py-[13px]"
-                style={{
-                  background: "var(--overdue-bg)",
-                  border: "1px solid var(--overdue-border)",
-                }}
-              >
-                <div
-                  className="mb-[9px] text-[11px] font-semibold uppercase tracking-[0.12em]"
-                  style={{ color: "var(--pink-label)" }}
-                >
-                  Overdue
-                </div>
-                {overdueTasks.map((t) => (
-                  <ChoreRow
-                    key={t.id}
-                    task={t}
-                    done={isDone(t)}
-                    days={daysUntilDue(t.dueAt)}
-                    onToggle={() => toggleDone(t.id)}
-                    onCycle={() => cycleAssignee(t.id)}
-                    compact
-                  />
-                ))}
-              </div>
-            )}
-
             {/* Room groups */}
             <div className="flex flex-col gap-[26px] px-[22px] pb-8 pt-[14px]">
               {grouped.length === 0 && (
@@ -679,7 +650,6 @@ export default function ChoreApp() {
                         key={t.id}
                         task={t}
                         done={isDone(t)}
-                        days={daysUntilDue(t.dueAt)}
                         onToggle={() => toggleDone(t.id)}
                         onCycle={() => cycleAssignee(t.id)}
                         onDelete={() => deleteTask(t.id)}
@@ -693,25 +663,41 @@ export default function ChoreApp() {
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto px-[22px] pb-[120px] pt-[58px]">
-            <div className="text-[13px] font-semibold tracking-[0.02em] text-[var(--secondary)]">
-              People
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+              {NAMES.you} & {NAMES.partner}
             </div>
-            <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.03em] text-[var(--text)]">
-              Who&apos;s on what
+            <h1 className="mt-[7px] text-[32px] font-bold tracking-[-0.025em] text-[var(--title)]">
+              History
             </h1>
-            <div className="mt-6 flex flex-col gap-3">
-              <ScoreCard name={NAMES.you} color={TOM} pct={stats.tomPct} label={stats.tomLabel} />
-              <ScoreCard
-                name={NAMES.partner}
-                color={ROSIE}
-                pct={stats.rosiePct}
-                label={stats.rosieLabel}
-              />
-            </div>
-            <p className="mt-6 text-[13px] leading-relaxed text-[var(--muted)]">
-              Rings count shared (Both) chores for each person. Filter the rota by person to see
-              only their list.
+            <p className="mt-2 text-[13px] text-[var(--muted)]">
+              Completed jobs after each weekly reset.
             </p>
+
+            <div className="mt-6 flex flex-col gap-2">
+              {sortedHistory.length === 0 && (
+                <div className="py-12 text-center text-[14px] text-[var(--muted)]">
+                  Nothing logged yet. Done jobs appear here after the weekly reset.
+                </div>
+              )}
+              {sortedHistory.map((entry) => (
+                <div
+                  key={entry.key}
+                  className="flex items-center gap-3 rounded-2xl px-[15px] py-[13px]"
+                  style={{ background: "var(--row)", boxShadow: "var(--card-shadow)" }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[15px] font-medium text-[var(--text)]">
+                      {entry.title}
+                    </div>
+                    <div className="mt-[3px] text-[11.5px] text-[var(--muted)]">
+                      {assigneeName(entry.assignee)} · {entry.room} ·{" "}
+                      {formatCompletedDate(entry.completedAt)}
+                    </div>
+                  </div>
+                  <AvatarButton assignee={entry.assignee} done={false} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -756,20 +742,20 @@ export default function ChoreApp() {
 
           <button
             type="button"
-            onClick={() => setTab("people")}
+            onClick={() => setTab("history")}
             className="flex flex-col items-center gap-[5px] text-[10.5px] font-medium"
-            style={{ color: tab === "people" ? "var(--text)" : "var(--dim)" }}
+            style={{ color: tab === "history" ? "var(--text)" : "var(--dim)" }}
           >
             <div
               className="h-[3px] w-[22px] rounded-[2px]"
               style={{
                 background:
-                  tab === "people"
+                  tab === "history"
                     ? "linear-gradient(90deg,#3b82f6,#ec4899)"
                     : "var(--nav-idle-bar)",
               }}
             />
-            People
+            History
           </button>
         </div>
 
