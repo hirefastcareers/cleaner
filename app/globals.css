@@ -7,3 +7,203 @@ body {
   padding: 0;
   margin: 0;
 }
+
+/* 2b light (default when system is light) */
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --tab-active: #ffffff;
+  --tab-idle: #e9ebef;
+  --pill: #e4e7ec;
+  --text: #14161a;
+  --secondary: #3b4048;
+  --muted: #767d89;
+  --dim: #9aa1ac;
+  --disabled: #a3aab6;
+  --hairline: rgba(20, 22, 26, 0.08);
+  --chip-border: rgba(20, 22, 26, 0.12);
+  --ring-track: #e4e7ec;
+  --pink-label: #d63b83;
+  --row: #ffffff;
+  --checkbox-border: rgba(20, 22, 26, 0.18);
+  --checkbox-overdue: rgba(236, 72, 153, 0.5);
+  --checkbox-bg: #ffffff;
+  --due-done: #b6bcc6;
+  --overdue-bg: rgba(236, 72, 153, 0.07);
+  --overdue-border: rgba(236, 72, 153, 0.24);
+  --nav-bg: rgba(242, 244, 247, 0.92);
+  --nav-idle-bar: #dcdfe5;
+  --chip-active-bg: #14161a;
+  --chip-active-text: #ffffff;
+  --chip-idle-text: #767d89;
+  --chip-idle-bg: #ffffff;
+  --card-shadow: 0 1px 2px rgba(20, 22, 26, 0.07);
+  --tab-shadow: 0 1px 3px rgba(20, 22, 26, 0.1);
+  --reset-pill-text: #767d89;
+  --scrim: rgba(20, 22, 26, 0.35);
+  --sheet-handle: rgba(20, 22, 26, 0.18);
+  --input-border: rgba(20, 22, 26, 0.12);
+  --who-idle-bg: #e9ebef;
+  --who-idle-text: #767d89;
+  --primary-btn: #14161a;
+  color-scheme: light;
+}
+
+/* 2a dark */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1d2026;
+    --raised: #22262e;
+    --tab-active: #282c34;
+    --tab-idle: #1a1d22;
+    --pill: rgba(255, 255, 255, 0.08);
+    --text: #f2f3f5;
+    --secondary: #c3c8d1;
+    --muted: #8b9099;
+    --dim: #6d737d;
+    --disabled: #5d636d;
+    --hairline: rgba(255, 255, 255, 0.08);
+    --chip-border: rgba(255, 255, 255, 0.13);
+    --ring-track: rgba(255, 255, 255, 0.09);
+    --pink-label: #f0709f;
+    --row: #1d2026;
+    --checkbox-border: rgba(255, 255, 255, 0.28);
+    --checkbox-overdue: rgba(236, 72, 153, 0.7);
+    --checkbox-bg: transparent;
+    --due-done: #4d525b;
+    --overdue-bg: rgba(236, 72, 153, 0.1);
+    --overdue-border: rgba(236, 72, 153, 0.28);
+    --nav-bg: rgba(20, 22, 26, 0.92);
+    --nav-idle-bar: #2b2f36;
+    --chip-active-bg: #f2f3f5;
+    --chip-active-text: #14161a;
+    --chip-idle-text: #9aa0aa;
+    --chip-idle-bg: transparent;
+    --card-shadow: none;
+    --tab-shadow: none;
+    --reset-pill-text: #989fab;
+    --scrim: rgba(0, 0, 0, 0.55);
+    --sheet-handle: rgba(255, 255, 255, 0.2);
+    --input-border: rgba(255, 255, 255, 0.13);
+    --who-idle-bg: #1a1d22;
+    --who-idle-text: #8b9099;
+    --primary-btn: #f2f3f5;
+    color-scheme: dark;
+  }
+}
+
+/* Manual override via data-theme on <html> */
+html[data-theme="light"] {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --tab-active: #ffffff;
+  --tab-idle: #e9ebef;
+  --pill: #e4e7ec;
+  --text: #14161a;
+  --secondary: #3b4048;
+  --muted: #767d89;
+  --dim: #9aa1ac;
+  --disabled: #a3aab6;
+  --hairline: rgba(20, 22, 26, 0.08);
+  --chip-border: rgba(20, 22, 26, 0.12);
+  --ring-track: #e4e7ec;
+  --pink-label: #d63b83;
+  --row: #ffffff;
+  --checkbox-border: rgba(20, 22, 26, 0.18);
+  --checkbox-overdue: rgba(236, 72, 153, 0.5);
+  --checkbox-bg: #ffffff;
+  --due-done: #b6bcc6;
+  --overdue-bg: rgba(236, 72, 153, 0.07);
+  --overdue-border: rgba(236, 72, 153, 0.24);
+  --nav-bg: rgba(242, 244, 247, 0.92);
+  --nav-idle-bar: #dcdfe5;
+  --chip-active-bg: #14161a;
+  --chip-active-text: #ffffff;
+  --chip-idle-text: #767d89;
+  --chip-idle-bg: #ffffff;
+  --card-shadow: 0 1px 2px rgba(20, 22, 26, 0.07);
+  --tab-shadow: 0 1px 3px rgba(20, 22, 26, 0.1);
+  --reset-pill-text: #767d89;
+  --scrim: rgba(20, 22, 26, 0.35);
+  --sheet-handle: rgba(20, 22, 26, 0.18);
+  --input-border: rgba(20, 22, 26, 0.12);
+  --who-idle-bg: #e9ebef;
+  --who-idle-text: #767d89;
+  --primary-btn: #14161a;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --bg: #14161a;
+  --surface: #1d2026;
+  --raised: #22262e;
+  --tab-active: #282c34;
+  --tab-idle: #1a1d22;
+  --pill: rgba(255, 255, 255, 0.08);
+  --text: #f2f3f5;
+  --secondary: #c3c8d1;
+  --muted: #8b9099;
+  --dim: #6d737d;
+  --disabled: #5d636d;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --chip-border: rgba(255, 255, 255, 0.13);
+  --ring-track: rgba(255, 255, 255, 0.09);
+  --pink-label: #f0709f;
+  --row: #1d2026;
+  --checkbox-border: rgba(255, 255, 255, 0.28);
+  --checkbox-overdue: rgba(236, 72, 153, 0.7);
+  --checkbox-bg: transparent;
+  --due-done: #4d525b;
+  --overdue-bg: rgba(236, 72, 153, 0.1);
+  --overdue-border: rgba(236, 72, 153, 0.28);
+  --nav-bg: rgba(20, 22, 26, 0.92);
+  --nav-idle-bar: #2b2f36;
+  --chip-active-bg: #f2f3f5;
+  --chip-active-text: #14161a;
+  --chip-idle-text: #9aa0aa;
+  --chip-idle-bg: transparent;
+  --card-shadow: none;
+  --tab-shadow: none;
+  --reset-pill-text: #989fab;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --sheet-handle: rgba(255, 255, 255, 0.2);
+  --input-border: rgba(255, 255, 255, 0.13);
+  --who-idle-bg: #1a1d22;
+  --who-idle-text: #8b9099;
+  --primary-btn: #f2f3f5;
+  color-scheme: dark;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-slide-up {
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}

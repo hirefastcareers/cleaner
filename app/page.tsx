@@ -1,27 +1,56 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, X, Check, Trash2, StickyNote, Sparkles, Calendar, ChevronRight } from "lucide-react";
-import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { X, Trash2, StickyNote } from "lucide-react";
 
-const ROOMS = ["Kitchen", "Bathroom", "Living Room", "Bedroom", "Garden", "General"];
+const ROOMS = ["Kitchen", "Bathroom", "Living Room", "Bedroom", "Garden", "General"] as const;
+const ROOM_CHIPS = ["All", ...ROOMS] as const;
 
-// Fixed names — no longer editable in the UI.
-const NAMES = { you: "Tom", partner: "Rosie" };
+const NAMES = { you: "Tom", partner: "Rosie" } as const;
+const TOM = "#3b82f6";
+const ROSIE = "#ec4899";
+const GRAD = "linear-gradient(135deg,#3b82f6,#ec4899)";
 
-const ASSIGNEE_STYLE: Record<string, { bg: string; label: string }> = {
-  you: { bg: "bg-blue-500", label: "Tom" },
-  partner: { bg: "bg-pink-500", label: "Rosie" },
-  both: { bg: "bg-gradient-to-tr from-pink-500 to-blue-500", label: "Both" },
-};
+type Assignee = "you" | "partner" | "both";
+type PersonFilter = "all" | "you" | "partner" | "both";
+type Tab = "rota" | "people";
 
 type Task = {
   id: number;
   title: string;
   room: string;
-  assignee: "you" | "partner" | "both";
+  assignee: Assignee;
   notes: string;
   completedAt: number | null;
+  /** Start-of-day ms for the due date. */
+  dueAt?: number | null;
 };
+
+function startOfDay(d = new Date()) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function dueAtFromOffset(days: number) {
+  const d = startOfDay();
+  d.setDate(d.getDate() + days);
+  return d.getTime();
+}
+
+function daysUntilDue(dueAt: number | null | undefined) {
+  if (dueAt == null) return 2;
+  const today = startOfDay().getTime();
+  const due = startOfDay(new Date(dueAt)).getTime();
+  return Math.round((due - today) / 86400000);
+}
+
+function dueLabel(days: number, done: boolean) {
+  if (done) return "Done";
+  if (days < 0) return `${-days}d overdue`;
+  if (days === 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  return `Due in ${days}d`;
+}
 
 function startOfWeek() {
   const d = new Date();
@@ -41,17 +70,16 @@ function daysUntilReset() {
 }
 
 const seedTasks: Task[] = [
-  { id: 1, title: "Hoover downstairs", room: "Living Room", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null },
-  { id: 2, title: "Clean the hob", room: "Kitchen", assignee: "partner", notes: "", completedAt: null },
-  { id: 3, title: "Bins out", room: "General", assignee: "both", notes: "Recycling is fortnightly.", completedAt: null },
-  { id: 4, title: "Change bedsheets", room: "Bedroom", assignee: "you", notes: "", completedAt: null },
-  { id: 5, title: "Water the plants", room: "Garden", assignee: "partner", notes: "", completedAt: null },
-  { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null },
+  { id: 1, title: "Hoover downstairs", room: "Living Room", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null, dueAt: dueAtFromOffset(0) },
+  { id: 2, title: "Clean the hob", room: "Kitchen", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(1) },
+  { id: 3, title: "Bins out", room: "General", assignee: "both", notes: "Recycling is fortnightly.", completedAt: null, dueAt: dueAtFromOffset(-1) },
+  { id: 4, title: "Change bedsheets", room: "Bedroom", assignee: "you", notes: "", completedAt: Date.now(), dueAt: dueAtFromOffset(3) },
+  { id: 5, title: "Water the plants", room: "Garden", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(2) },
+  { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null, dueAt: dueAtFromOffset(-2) },
+  { id: 7, title: "Load the dishwasher", room: "Kitchen", assignee: "you", notes: "", completedAt: null, dueAt: dueAtFromOffset(0) },
+  { id: 8, title: "Tidy the sofa cushions", room: "Living Room", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(4) },
 ];
 
-// Shared state: persisted server-side via Supabase (see app/api/state/route.ts),
-// polled every few seconds so both phones stay in sync. Pass a `paused` ref
-// (true while a modal is open/typing) to avoid a poll clobbering an in-progress edit.
 function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefObject<boolean>) {
   const [value, setValue] = useState<T>(initial);
   const [loaded, setLoaded] = useState(false);
@@ -100,110 +128,236 @@ function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefO
   return [value, setValue] as const;
 }
 
-// A task row you can swipe left to delete (flashes red, slides off) or
-// swipe right to complete (flashes green, snaps back). Tapping it when it
-// hasn't moved opens the detail sheet.
-function SwipeableTaskRow({
+function ProgressRing({
+  pct,
+  color,
+  size = 56,
+  stroke = 5,
+}: {
+  pct: number;
+  color: string;
+  size?: number;
+  stroke?: number;
+}) {
+  const r = (size - stroke) / 2;
+  const C = 2 * Math.PI * r;
+  const offset = C * (1 - Math.min(100, Math.max(0, pct)) / 100);
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="var(--ring-track)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={offset}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: "stroke-dashoffset .45s cubic-bezier(.4,0,.2,1)" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[12px] font-semibold text-[var(--text)]">{pct}%</span>
+      </div>
+    </div>
+  );
+}
+
+function ScoreCard({
+  name,
+  color,
+  pct,
+  label,
+}: {
+  name: string;
+  color: string;
+  pct: number;
+  label: string;
+}) {
+  return (
+    <div
+      className="flex flex-1 items-center gap-3 rounded-[18px] p-[13px]"
+      style={{ background: "var(--raised)", boxShadow: "var(--card-shadow)" }}
+    >
+      <ProgressRing pct={pct} color={color} />
+      <div className="min-w-0">
+        <div className="text-[13.5px] font-semibold text-[var(--text)]">{name}</div>
+        <div className="mt-0.5 text-[11.5px] font-normal text-[var(--muted)]">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function AvatarButton({
+  assignee,
+  done,
+  onClick,
+}: {
+  assignee: Assignee;
+  done: boolean;
+  onClick: () => void;
+}) {
+  const letter = assignee === "both" ? "B" : assignee === "you" ? "T" : "R";
+  const bg =
+    assignee === "you" ? TOM : assignee === "partner" ? ROSIE : GRAD;
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
+      style={{ background: bg, opacity: done ? 0.45 : 1 }}
+      title={assignee === "both" ? "Both" : NAMES[assignee]}
+      aria-label={`Reassign (${letter})`}
+    >
+      {letter}
+    </button>
+  );
+}
+
+function Checkbox({
+  done,
+  overdue,
+  onClick,
+}: {
+  done: boolean;
+  overdue: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
+      style={
+        done
+          ? { background: GRAD, border: 0, color: "#fff" }
+          : {
+              background: "var(--checkbox-bg)",
+              border: `1.5px solid ${overdue ? "var(--checkbox-overdue)" : "var(--checkbox-border)"}`,
+              color: "transparent",
+            }
+      }
+      aria-label={done ? "Mark incomplete" : "Mark done"}
+    >
+      {done ? "✓" : ""}
+    </button>
+  );
+}
+
+function ChoreRow({
   task,
   done,
-  onToggleDone,
-  onDelete,
-  onOpen,
+  days,
+  onToggle,
+  onCycle,
+  onOpenNotes,
+  compact,
 }: {
   task: Task;
   done: boolean;
-  onToggleDone: (id: number) => void;
-  onDelete: (id: number) => void;
-  onOpen: (task: Task) => void;
+  days: number;
+  onToggle: () => void;
+  onCycle: () => void;
+  onOpenNotes?: () => void;
+  compact?: boolean;
 }) {
-  const x = useMotionValue(0);
-  const greenOpacity = useTransform(x, [0, 170], [0, 1]);
-  const redOpacity = useTransform(x, [-170, 0], [1, 0]);
-  const THRESHOLD = 150;
+  const overdue = days < 0 && !done;
+  const label = dueLabel(days, done);
 
-  function handleDragEnd(_e: unknown, info: { offset: { x: number } }) {
-    if (info.offset.x < -THRESHOLD) {
-      // Delete: slide fully off screen, then remove from state.
-      animate(x, -500, {
-        duration: 0.25,
-        ease: "easeIn",
-        onComplete: () => onDelete(task.id),
-      });
-    } else if (info.offset.x > THRESHOLD) {
-      onToggleDone(task.id);
-      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
-    } else {
-      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
-    }
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3 py-[7px]">
+        <Checkbox done={done} overdue={overdue} onClick={onToggle} />
+        <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
+          <div
+            className="truncate text-[15px] font-medium"
+            style={{
+              color: done ? "var(--disabled)" : "var(--text)",
+              textDecoration: done ? "line-through" : "none",
+            }}
+          >
+            {task.title}
+          </div>
+          <div className="mt-[3px] text-[11.5px] font-normal" style={{ color: "var(--pink-label)" }}>
+            {label} · {task.room}
+          </div>
+        </button>
+        <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
+      </div>
+    );
   }
 
   return (
-    <motion.div layout="position" className="relative" style={{ touchAction: "pan-y" }}>
-      {/* Reveal layers behind the row */}
-      <motion.div
-        className="absolute inset-0 flex items-center px-5 bg-green-500"
-        style={{ opacity: greenOpacity }}
-      >
-        <Check size={20} color="white" strokeWidth={3} />
-      </motion.div>
-      <motion.div
-        className="absolute inset-0 flex items-center justify-end px-5 bg-red-500"
-        style={{ opacity: redOpacity }}
-      >
-        <Trash2 size={20} color="white" />
-      </motion.div>
-
-      {/* Draggable foreground row */}
-      <motion.div
-        drag="x"
-        dragElastic={0.85}
-        dragConstraints={{ left: -320, right: 320 }}
-        dragTransition={{ bounceStiffness: 300, bounceDamping: 26 }}
-        style={{ x }}
-        onDragEnd={handleDragEnd}
-        onClick={() => {
-          if (Math.abs(x.get()) < 5) onOpen(task);
-        }}
-        className={`relative z-10 flex items-center gap-3 bg-white px-3.5 py-3 cursor-grab active:cursor-grabbing transition-colors duration-200 ${
-          done ? "opacity-40 bg-black/[0.01]" : ""
-        }`}
-      >
+    <div
+      className="mb-2 flex min-h-[56px] items-center gap-[13px] rounded-2xl px-[15px] py-[13px]"
+      style={{
+        background: "var(--row)",
+        boxShadow: overdue
+          ? `inset 3px 0 0 ${ROSIE}, var(--card-shadow)`
+          : "var(--card-shadow)",
+      }}
+    >
+      <Checkbox done={done} overdue={overdue} onClick={onToggle} />
+      <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
+        <div
+          className="truncate text-[15px] font-medium"
+          style={{
+            color: done ? "var(--disabled)" : "var(--text)",
+            textDecoration: done ? "line-through" : "none",
+          }}
+        >
+          {task.title}
+        </div>
+        <div
+          className="mt-[3px] text-[11.5px] font-normal"
+          style={{
+            color: overdue ? ROSIE : done ? "var(--due-done)" : "var(--muted)",
+          }}
+        >
+          {label}
+        </div>
+      </button>
+      {task.notes && onOpenNotes && (
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
-            onToggleDone(task.id);
+            onOpenNotes();
           }}
-          className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all duration-200 active:scale-90 ${
-            done ? "bg-blue-500 border-none shadow-sm" : "border-2 border-black/20 hover:border-black/40 bg-transparent"
-          }`}
+          className="shrink-0 text-[var(--dim)]"
+          aria-label="Notes"
         >
-          {done && <Check size={14} color="white" strokeWidth={3.5} />}
+          <StickyNote size={15} />
         </button>
-
-        <div className="flex-1 min-w-0 pr-1">
-          <p className={`text-[15px] font-medium leading-snug transition-all ${done ? "line-through text-black/60" : "text-[#1C1C1E]"}`}>
-            {task.title}
-          </p>
-        </div>
-
-        {task.notes && <StickyNote size={15} className="text-black/20 shrink-0" />}
-
-        <div
-          className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[10px] font-extrabold text-white shadow-sm ${ASSIGNEE_STYLE[task.assignee].bg}`}
-          title={ASSIGNEE_STYLE[task.assignee].label}
-        >
-          {task.assignee === "both" ? "B" : task.assignee === "you" ? "T" : "R"}
-        </div>
-
-        <ChevronRight size={14} className="text-black/20 shrink-0" />
-      </motion.div>
-    </motion.div>
+      )}
+      <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
+    </div>
   );
 }
 
 export default function ChoreApp() {
   const [showAdd, setShowAdd] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [tab, setTab] = useState<Tab>("rota");
 
   const pausedRef = useRef(false);
   useEffect(() => {
@@ -212,46 +366,105 @@ export default function ChoreApp() {
 
   const [tasks, setTasks] = useSharedState<Task[]>("tasks", seedTasks, pausedRef);
   const [roomFilter, setRoomFilter] = useState("All");
-  const [assigneeFilter, setAssigneeFilter] = useState("All");
-  const [form, setForm] = useState({ title: "", room: "Kitchen", assignee: "you" as Task["assignee"], notes: "" });
+  const [personFilter, setPersonFilter] = useState<PersonFilter>("all");
+  const [form, setForm] = useState({
+    title: "",
+    room: "Kitchen" as string,
+    assignee: "you" as Assignee,
+  });
 
   const weekStart = useMemo(() => startOfWeek().getTime(), []);
   const isDone = (t: Task) => !!(t.completedAt && t.completedAt >= weekStart);
 
-  const rooms = useMemo(() => {
-    const present = Array.from(new Set(tasks.map((t) => t.room)));
-    return ["All", ...ROOMS.filter((r) => present.includes(r)), ...present.filter((r) => !ROOMS.includes(r))];
-  }, [tasks]);
-
-  const filtered = tasks.filter(
-    (t) => (roomFilter === "All" || t.room === roomFilter) && (assigneeFilter === "All" || t.assignee === assigneeFilter)
-  );
+  const filtered = useMemo(() => {
+    return tasks.filter((t) => {
+      if (roomFilter !== "All" && t.room !== roomFilter) return false;
+      if (personFilter === "all") return true;
+      if (personFilter === "both") return t.assignee === "both";
+      return t.assignee === personFilter;
+    });
+  }, [tasks, roomFilter, personFilter]);
 
   const grouped = useMemo(() => {
-    const g: Record<string, Task[]> = {};
-    filtered.forEach((t) => {
-      g[t.room] = g[t.room] || [];
-      g[t.room].push(t);
-    });
-    Object.values(g).forEach((arr) => arr.sort((a, b) => Number(isDone(a)) - Number(isDone(b))));
-    return g;
+    const groups: { room: string; items: Task[] }[] = [];
+    for (const room of ROOMS) {
+      const items = filtered.filter((t) => t.room === room);
+      if (items.length) {
+        items.sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
+        groups.push({ room, items });
+      }
+    }
+    const known = new Set<string>(ROOMS);
+    const extras = Array.from(new Set(filtered.map((t) => t.room).filter((r) => !known.has(r))));
+    for (const room of extras) {
+      const items = filtered.filter((t) => t.room === room);
+      items.sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
+      groups.push({ room, items });
+    }
+    return groups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, weekStart]);
 
-  const doneCount = tasks.filter(isDone).length;
-  const pct = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
+  const overdueTasks = useMemo(
+    () =>
+      filtered.filter((t) => {
+        if (isDone(t)) return false;
+        return daysUntilDue(t.dueAt) < 0;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtered, weekStart]
+  );
+
+  const stats = useMemo(() => {
+    const mine = (who: "you" | "partner") =>
+      tasks.filter((t) => t.assignee === who || t.assignee === "both");
+    const tom = mine("you");
+    const rosie = mine("partner");
+    const pct = (list: Task[]) =>
+      list.length ? Math.round((list.filter(isDone).length / list.length) * 100) : 0;
+    return {
+      tomPct: pct(tom),
+      rosiePct: pct(rosie),
+      tomLabel: `${tom.filter(isDone).length} of ${tom.length} done`,
+      rosieLabel: `${rosie.filter(isDone).length} of ${rosie.length} done`,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, weekStart]);
 
   function toggleDone(id: number) {
-    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, completedAt: isDone(t) ? null : Date.now() } : t)));
+    setTasks((ts) =>
+      ts.map((t) => (t.id === id ? { ...t, completedAt: isDone(t) ? null : Date.now() } : t))
+    );
+  }
+
+  function cycleAssignee(id: number) {
+    const next: Record<Assignee, Assignee> = {
+      you: "partner",
+      partner: "both",
+      both: "you",
+    };
+    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, assignee: next[t.assignee] } : t)));
   }
 
   function addTask() {
-    if (!form.title.trim()) return;
+    const title = form.title.trim();
+    if (!title) {
+      setShowAdd(false);
+      return;
+    }
     setTasks((ts) => [
       ...ts,
-      { id: Date.now(), title: form.title.trim(), room: form.room, assignee: form.assignee, notes: form.notes.trim(), completedAt: null },
+      {
+        id: Date.now(),
+        title,
+        room: form.room,
+        assignee: form.assignee,
+        notes: "",
+        completedAt: null,
+        dueAt: dueAtFromOffset(2),
+      },
     ]);
-    setForm({ title: "", room: form.room, assignee: "you", notes: "" });
+    setForm({ title: "", room: form.room, assignee: "you" });
     setShowAdd(false);
   }
 
@@ -265,288 +478,437 @@ export default function ChoreApp() {
     setActiveTask((a) => (a ? { ...a, ...patch } : a));
   }
 
-  const ring = 2 * Math.PI * 22;
+  const personTabs: { key: PersonFilter; label: string }[] = [
+    { key: "all", label: "Everyone" },
+    { key: "you", label: NAMES.you },
+    { key: "partner", label: NAMES.partner },
+    { key: "both", label: "Both" },
+  ];
+
+  const whoColors: Record<Assignee, string> = {
+    you: TOM,
+    partner: ROSIE,
+    both: GRAD,
+  };
 
   return (
-    <div
-      style={{ fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}
-      className="w-full flex justify-center bg-[#F2F2F7] min-h-screen text-[#1C1C1E] selection:bg-blue-500/20"
-    >
-      <div className="w-full max-w-[430px] min-h-screen bg-[#F2F2F7] relative pb-32 flex flex-col">
-        <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#F2F2F7]/80 border-b border-black/[0.05] px-5 pt-12 pb-3 transition-all">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <span className="text-[11px] font-bold tracking-wider text-black/40 uppercase">Overview</span>
-              <h1 className="text-[32px] font-extrabold tracking-tight text-[#1C1C1E]">Home Rota</h1>
-            </div>
-            <div className="relative w-14 h-14 shrink-0 flex items-center justify-center">
-              <svg viewBox="0 0 52 52" className="w-14 h-14 -rotate-90">
-                <circle cx="26" cy="26" r="22" fill="none" stroke="#E5E5EA" strokeWidth={4.5} />
-                <circle
-                  cx="26"
-                  cy="26"
-                  r="22"
-                  fill="none"
-                  stroke="url(#ringGradient)"
-                  strokeWidth={4.5}
-                  strokeLinecap="round"
-                  strokeDasharray={ring}
-                  strokeDashoffset={ring - (ring * pct) / 100}
-                  style={{ transition: "stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1)" }}
+    <div className="flex min-h-screen w-full justify-center bg-[var(--bg)] text-[var(--text)] selection:bg-blue-500/20">
+      <div className="relative flex min-h-screen w-full max-w-[430px] flex-col bg-[var(--bg)]">
+        {tab === "rota" ? (
+          <div className="flex-1 overflow-y-auto pb-[120px]">
+            {/* Header */}
+            <div className="px-[22px] pb-[26px] pt-[58px]">
+              <div className="flex items-start justify-between">
+                <div className="text-[13px] font-semibold tracking-[0.02em] text-[var(--secondary)]">
+                  {NAMES.you} & {NAMES.partner}
+                </div>
+                <div
+                  className="rounded-full px-[11px] py-[6px] text-[11.5px] font-medium"
+                  style={{ background: "var(--pill)", color: "var(--reset-pill-text)" }}
+                >
+                  Resets in {daysUntilReset()}d
+                </div>
+              </div>
+
+              <div className="mt-[22px] flex gap-3">
+                <ScoreCard name={NAMES.you} color={TOM} pct={stats.tomPct} label={stats.tomLabel} />
+                <ScoreCard
+                  name={NAMES.partner}
+                  color={ROSIE}
+                  pct={stats.rosiePct}
+                  label={stats.rosieLabel}
                 />
-                <defs>
-                  <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#007AFF" />
-                    <stop offset="100%" stopColor="#5856D6" />
-                  </linearGradient>
-                </defs>
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-[12px] font-extrabold text-[#1C1C1E]">{pct}%</span>
               </div>
             </div>
-          </div>
 
-          <div className="flex items-center justify-between text-[13px]">
-            <span className="text-black/50 font-medium py-1">{NAMES.you} &amp; {NAMES.partner}</span>
-            <div className="flex items-center gap-1 text-[12px] font-semibold text-black/40 bg-black/[0.04] px-2.5 py-1 rounded-full">
-              <Calendar size={12} />
-              <span>Reset in {daysUntilReset()}d</span>
+            {/* Person tabs */}
+            <div
+              className="sticky top-0 z-10 flex gap-1.5 px-[22px] pb-3 pt-[18px]"
+              style={{ background: "var(--bg)" }}
+            >
+              {personTabs.map(({ key, label }) => {
+                const active = personFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setPersonFilter(key)}
+                    className="flex-1 rounded-[11px] px-1 py-[9px] text-[12.5px]"
+                    style={{
+                      fontWeight: active ? 600 : 500,
+                      color: active ? "var(--text)" : "var(--muted)",
+                      background: active ? "var(--tab-active)" : "var(--tab-idle)",
+                      boxShadow: active ? "var(--tab-shadow)" : "none",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        </div>
 
-        <div className="px-4 pt-4 space-y-4 flex-1">
-          <div className="bg-[#E3E3E8] p-0.5 rounded-xl flex items-center shadow-inner">
-            {["All", "you", "partner", "both"].map((a) => {
-              const active = assigneeFilter === a;
-              return (
-                <button
-                  key={a}
-                  onClick={() => setAssigneeFilter(a)}
-                  className={`flex-1 py-1.5 rounded-[9px] text-[12px] font-semibold transition-all duration-200 ${
-                    active ? "bg-white text-black shadow-[0_2px_8px_rgba(0,0,0,0.12)]" : "text-black/60 hover:text-black"
-                  }`}
+            {/* Room chips */}
+            <div className="no-scrollbar flex gap-[7px] overflow-x-auto px-[22px] pb-2">
+              {ROOM_CHIPS.map((r) => {
+                const active = roomFilter === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRoomFilter(r)}
+                    className="shrink-0 whitespace-nowrap rounded-full px-[14px] py-2 text-[12.5px] font-medium"
+                    style={{
+                      background: active ? "var(--chip-active-bg)" : "var(--chip-idle-bg)",
+                      color: active ? "var(--chip-active-text)" : "var(--chip-idle-text)",
+                      border: `1px solid ${active ? "transparent" : "var(--chip-border)"}`,
+                    }}
+                  >
+                    {r}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Overdue */}
+            {overdueTasks.length > 0 && (
+              <div
+                className="mx-[22px] mb-1 mt-1.5 rounded-[18px] px-[15px] py-[13px]"
+                style={{
+                  background: "var(--overdue-bg)",
+                  border: "1px solid var(--overdue-border)",
+                }}
+              >
+                <div
+                  className="mb-[9px] text-[11px] font-semibold uppercase tracking-[0.12em]"
+                  style={{ color: "var(--pink-label)" }}
                 >
-                  {a === "All" ? "Everyone" : a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-4 px-4 scroll-smooth">
-            {rooms.map((r) => {
-              const active = roomFilter === r;
-              return (
-                <button
-                  key={r}
-                  onClick={() => setRoomFilter(r)}
-                  className={`px-3.5 py-1.5 rounded-full text-[12px] font-semibold whitespace-nowrap transition-all duration-200 active:scale-95 ${
-                    active ? "bg-black text-white shadow-md" : "bg-white/80 text-black/70 hover:bg-white shadow-sm border border-black/[0.03]"
-                  }`}
-                >
-                  {r}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="space-y-5 pt-1">
-            {Object.keys(grouped).length === 0 && (
-              <div className="text-center py-16 px-4">
-                <div className="w-12 h-12 rounded-2xl bg-black/5 flex items-center justify-center mx-auto mb-3 text-black/30">
-                  <Sparkles size={24} />
+                  Overdue
                 </div>
-                <p className="text-[15px] font-semibold text-black/60">No chores scheduled</p>
-                <p className="text-[13px] text-black/40 mt-1">Tap + below to add a task to this list.</p>
+                {overdueTasks.map((t) => (
+                  <ChoreRow
+                    key={t.id}
+                    task={t}
+                    done={isDone(t)}
+                    days={daysUntilDue(t.dueAt)}
+                    onToggle={() => toggleDone(t.id)}
+                    onCycle={() => cycleAssignee(t.id)}
+                    compact
+                  />
+                ))}
               </div>
             )}
 
-            {Object.entries(grouped).map(([room, items]) => (
-              <div key={room} className="space-y-1.5">
-                <h2 className="text-[12px] font-bold uppercase tracking-wider text-black/40 px-3">{room}</h2>
-                <div className="bg-white rounded-2xl overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-black/[0.04] divide-y divide-black/[0.04]">
-                  {items.map((t) => (
-                    <SwipeableTaskRow
-                      key={t.id}
-                      task={t}
-                      done={isDone(t)}
-                      onToggleDone={toggleDone}
-                      onDelete={deleteTask}
-                      onOpen={setActiveTask}
-                    />
-                  ))}
+            {/* Room groups */}
+            <div className="flex flex-col gap-[26px] px-[22px] pb-8 pt-[14px]">
+              {grouped.length === 0 && (
+                <div className="px-5 py-12 text-center text-[14px] text-[var(--muted)]">
+                  Nothing here. Nice work.
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              )}
 
-        <div className="fixed bottom-6 inset-x-0 flex justify-center pointer-events-none z-10">
+              {grouped.map(({ room, items }) => {
+                const doneCount = items.filter(isDone).length;
+                return (
+                  <div key={room}>
+                    <div className="mb-1.5 flex items-baseline gap-[9px] px-0.5">
+                      <span className="text-[13px] font-semibold text-[var(--text)]">{room}</span>
+                      <span className="text-[11.5px] font-medium text-[var(--dim)]">
+                        {doneCount}/{items.length}
+                      </span>
+                    </div>
+                    {items.map((t) => (
+                      <ChoreRow
+                        key={t.id}
+                        task={t}
+                        done={isDone(t)}
+                        days={daysUntilDue(t.dueAt)}
+                        onToggle={() => toggleDone(t.id)}
+                        onCycle={() => cycleAssignee(t.id)}
+                        onOpenNotes={() => setActiveTask(t)}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-[22px] pb-[120px] pt-[58px]">
+            <div className="text-[13px] font-semibold tracking-[0.02em] text-[var(--secondary)]">
+              People
+            </div>
+            <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.03em] text-[var(--text)]">
+              Who&apos;s on what
+            </h1>
+            <div className="mt-6 flex flex-col gap-3">
+              <ScoreCard name={NAMES.you} color={TOM} pct={stats.tomPct} label={stats.tomLabel} />
+              <ScoreCard
+                name={NAMES.partner}
+                color={ROSIE}
+                pct={stats.rosiePct}
+                label={stats.rosieLabel}
+              />
+            </div>
+            <p className="mt-6 text-[13px] leading-relaxed text-[var(--muted)]">
+              Rings count shared (Both) chores for each person. Filter the rota by person to see
+              only their list.
+            </p>
+          </div>
+        )}
+
+        {/* Bottom tab bar */}
+        <div
+          className="fixed bottom-0 left-1/2 z-20 flex w-full max-w-[430px] -translate-x-1/2 items-center justify-around px-[22px] pb-[26px] pt-3"
+          style={{
+            background: "var(--nav-bg)",
+            borderTop: "1px solid var(--hairline)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+          }}
+        >
           <button
-            onClick={() => setShowAdd(true)}
-            className="pointer-events-auto w-14 h-14 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-[0_8px_25px_rgba(0,122,255,0.4)] active:scale-90 hover:scale-105 transition-all duration-200"
+            type="button"
+            onClick={() => setTab("rota")}
+            className="flex flex-col items-center gap-[5px] text-[10.5px] font-medium"
+            style={{ color: tab === "rota" ? "var(--text)" : "var(--dim)" }}
           >
-            <Plus size={28} strokeWidth={2.5} />
+            <div
+              className="h-[3px] w-[22px] rounded-[2px]"
+              style={{
+                background:
+                  tab === "rota" ? "linear-gradient(90deg,#3b82f6,#ec4899)" : "var(--nav-idle-bar)",
+              }}
+            />
+            Rota
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowAdd(true)}
+            className="-mt-[22px] flex h-[52px] w-[52px] items-center justify-center rounded-full text-[27px] font-light leading-none text-white"
+            style={{
+              background: GRAD,
+              boxShadow: "0 6px 20px rgba(236,72,153,.32)",
+            }}
+            aria-label="Add chore"
+          >
+            +
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab("people")}
+            className="flex flex-col items-center gap-[5px] text-[10.5px] font-medium"
+            style={{ color: tab === "people" ? "var(--text)" : "var(--dim)" }}
+          >
+            <div
+              className="h-[3px] w-[22px] rounded-[2px]"
+              style={{
+                background:
+                  tab === "people"
+                    ? "linear-gradient(90deg,#3b82f6,#ec4899)"
+                    : "var(--nav-idle-bar)",
+              }}
+            />
+            People
           </button>
         </div>
 
+        {/* Add chore sheet */}
         {showAdd && (
-          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm flex items-end justify-center animate-fade-in" onClick={() => setShowAdd(false)}>
+          <div
+            className="animate-fade-in fixed inset-0 z-40 flex items-end justify-center"
+            style={{ background: "var(--scrim)" }}
+            onClick={() => setShowAdd(false)}
+          >
             <div
-              className="w-full max-w-[430px] bg-[#F2F2F7] rounded-t-[28px] p-5 pb-9 shadow-2xl transition-transform duration-300 animate-slide-up border-t border-white/20"
+              className="animate-slide-up w-full max-w-[430px] rounded-t-[26px] px-[22px] pb-7 pt-5"
+              style={{ background: "var(--bg)" }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="w-9 h-1 bg-black/20 rounded-full mx-auto mb-4" />
-              <div className="flex items-center justify-between mb-5 px-1">
-                <h3 className="text-[20px] font-bold text-[#1C1C1E]">New Task</h3>
-                <button onClick={() => setShowAdd(false)} className="w-7 h-7 rounded-full bg-black/5 flex items-center justify-center text-black/50 hover:bg-black/10 active:scale-90 transition-all">
-                  <X size={16} strokeWidth={2.5} />
-                </button>
+              <div
+                className="mx-auto mb-4 h-1 w-[38px] rounded-full"
+                style={{ background: "var(--sheet-handle)" }}
+              />
+              <h3 className="mb-4 text-[18px] font-semibold text-[var(--text)]">New chore</h3>
+
+              <input
+                autoFocus
+                placeholder="What needs doing?"
+                value={form.title}
+                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                className="mb-5 w-full rounded-[14px] px-3.5 py-3.5 text-[15px] outline-none"
+                style={{
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  border: "1px solid var(--input-border)",
+                  boxShadow: "var(--card-shadow)",
+                }}
+              />
+
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                Who
+              </div>
+              <div className="mb-5 flex gap-2">
+                {(["you", "partner", "both"] as const).map((a) => {
+                  const selected = form.assignee === a;
+                  return (
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, assignee: a }))}
+                      className="flex-1 rounded-[13px] py-3 text-[13px] font-semibold"
+                      style={{
+                        background: selected ? whoColors[a] : "var(--who-idle-bg)",
+                        color: selected ? "#fff" : "var(--who-idle-text)",
+                      }}
+                    >
+                      {a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
+                    </button>
+                  );
+                })}
               </div>
 
-              <div className="space-y-4">
-                <input
-                  autoFocus
-                  placeholder="Task title"
-                  value={form.title}
-                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                  className="w-full bg-white rounded-xl px-4 py-3.5 text-[16px] text-[#1C1C1E] placeholder:text-black/30 outline-none border border-black/[0.05] shadow-sm focus:ring-2 focus:ring-blue-500/20"
-                />
-
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-black/[0.05] space-y-3">
-                  <div>
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-black/40 block mb-2">Room</label>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {ROOMS.map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => setForm((f) => ({ ...f, room: r }))}
-                          className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all active:scale-95 ${
-                            form.room === r ? "bg-blue-500 text-white shadow-sm" : "bg-black/[0.04] text-black/70 hover:bg-black/[0.07]"
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-black/[0.04]">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-black/40 block mb-2">Assign To</label>
-                    <div className="bg-[#E3E3E8] p-0.5 rounded-lg flex gap-1">
-                      {(["you", "partner", "both"] as const).map((a) => (
-                        <button
-                          key={a}
-                          onClick={() => setForm((f) => ({ ...f, assignee: a }))}
-                          className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-all ${
-                            form.assignee === a ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
-                          }`}
-                        >
-                          {a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <textarea
-                  placeholder="Notes (optional)"
-                  value={form.notes}
-                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                  className="w-full bg-white rounded-xl px-4 py-3 text-[14px] text-[#1C1C1E] placeholder:text-black/30 outline-none border border-black/[0.05] shadow-sm resize-none focus:ring-2 focus:ring-blue-500/20"
-                  rows={2}
-                />
-
-                <button
-                  onClick={addTask}
-                  disabled={!form.title.trim()}
-                  className="w-full py-3.5 rounded-xl text-[16px] font-semibold text-white bg-blue-500 disabled:opacity-40 active:scale-[0.98] shadow-[0_4px_12px_rgba(0,122,255,0.3)] transition-all"
-                >
-                  Add Task
-                </button>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                Room
               </div>
+              <div className="mb-6 flex flex-wrap gap-[7px]">
+                {ROOMS.map((r) => {
+                  const active = form.room === r;
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, room: r }))}
+                      className="rounded-full px-[14px] py-2 text-[12.5px] font-medium"
+                      style={{
+                        background: active ? "var(--chip-active-bg)" : "var(--chip-idle-bg)",
+                        color: active ? "var(--chip-active-text)" : "var(--chip-idle-text)",
+                        border: `1px solid ${active ? "transparent" : "var(--chip-border)"}`,
+                      }}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={addTask}
+                className="w-full rounded-2xl py-4 text-[15px] font-semibold"
+                style={{
+                  background: "var(--primary-btn)",
+                  color: "var(--bg)",
+                }}
+              >
+                Add chore
+              </button>
             </div>
           </div>
         )}
 
+        {/* Notes / detail sheet (existing behaviour, restyled) */}
         {activeTask && (
-          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm flex items-end justify-center animate-fade-in" onClick={() => setActiveTask(null)}>
-            <div className="w-full max-w-[430px] bg-[#F2F2F7] rounded-t-[28px] p-5 pb-9 shadow-2xl animate-slide-up border-t border-white/20" onClick={(e) => e.stopPropagation()}>
-              <div className="w-9 h-1 bg-black/20 rounded-full mx-auto mb-4" />
-              <div className="flex items-center justify-between mb-1 px-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-blue-500">{activeTask.room}</span>
-                <button onClick={() => setActiveTask(null)} className="w-7 h-7 rounded-full bg-black/5 flex items-center justify-center text-black/50 hover:bg-black/10 active:scale-90 transition-all">
+          <div
+            className="animate-fade-in fixed inset-0 z-40 flex items-end justify-center"
+            style={{ background: "var(--scrim)" }}
+            onClick={() => setActiveTask(null)}
+          >
+            <div
+              className="animate-slide-up w-full max-w-[430px] rounded-t-[26px] px-[22px] pb-7 pt-5"
+              style={{ background: "var(--bg)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                className="mx-auto mb-4 h-1 w-[38px] rounded-full"
+                style={{ background: "var(--sheet-handle)" }}
+              />
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-blue-500">
+                  {activeTask.room}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTask(null)}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--muted)]"
+                  style={{ background: "var(--pill)" }}
+                >
                   <X size={16} strokeWidth={2.5} />
                 </button>
               </div>
+              <h3 className="mb-4 text-[22px] font-semibold text-[var(--text)]">{activeTask.title}</h3>
 
-              <h3 className="text-[22px] font-bold text-[#1C1C1E] mb-4 px-1">{activeTask.title}</h3>
-
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-black/[0.05] space-y-3">
-                  <div>
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-black/40 block mb-2">Assigned To</label>
-                    <div className="bg-[#E3E3E8] p-0.5 rounded-lg flex gap-1">
-                      {(["you", "partner", "both"] as const).map((a) => (
+              <div
+                className="mb-4 space-y-3 rounded-[16px] p-3"
+                style={{ background: "var(--surface)", boxShadow: "var(--card-shadow)" }}
+              >
+                <div>
+                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                    Assigned to
+                  </label>
+                  <div className="flex gap-2">
+                    {(["you", "partner", "both"] as const).map((a) => {
+                      const selected = activeTask.assignee === a;
+                      return (
                         <button
                           key={a}
+                          type="button"
                           onClick={() => saveActiveTask({ assignee: a })}
-                          className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-all ${
-                            activeTask.assignee === a ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
-                          }`}
+                          className="flex-1 rounded-[13px] py-3 text-[13px] font-semibold"
+                          style={{
+                            background: selected ? whoColors[a] : "var(--who-idle-bg)",
+                            color: selected ? "#fff" : "var(--who-idle-text)",
+                          }}
                         >
                           {a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
                         </button>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
+              </div>
 
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-black/[0.05]">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-black/40 block mb-1">Notes</label>
-                  <textarea
-                    value={activeTask.notes}
-                    onChange={(e) => saveActiveTask({ notes: e.target.value })}
-                    placeholder="Add a note or description..."
-                    className="w-full bg-transparent text-[14px] text-[#1C1C1E] placeholder:text-black/30 outline-none resize-none"
-                    rows={3}
-                  />
-                </div>
+              <div
+                className="mb-4 rounded-[16px] p-3"
+                style={{ background: "var(--surface)", boxShadow: "var(--card-shadow)" }}
+              >
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Notes
+                </label>
+                <textarea
+                  value={activeTask.notes}
+                  onChange={(e) => saveActiveTask({ notes: e.target.value })}
+                  placeholder="Add a note..."
+                  className="w-full resize-none bg-transparent text-[14px] text-[var(--text)] outline-none placeholder:text-[var(--dim)]"
+                  rows={3}
+                />
+              </div>
 
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={() => {
-                      toggleDone(activeTask.id);
-                      setActiveTask(null);
-                    }}
-                    className={`flex-1 py-3.5 rounded-xl text-[15px] font-semibold text-white shadow-md active:scale-[0.98] transition-all ${
-                      isDone(activeTask) ? "bg-amber-500" : "bg-blue-500"
-                    }`}
-                  >
-                    {isDone(activeTask) ? "Mark Incomplete" : "Complete Task"}
-                  </button>
-                  <button
-                    onClick={() => deleteTask(activeTask.id)}
-                    className="w-12 h-12 rounded-xl flex items-center justify-center bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-90 transition-all"
-                    title="Delete task"
-                  >
-                    <Trash2 size={20} />
-                  </button>
-                </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleDone(activeTask.id);
+                    setActiveTask(null);
+                  }}
+                  className="flex-1 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
+                  style={{ background: isDone(activeTask) ? "#f59e0b" : GRAD }}
+                >
+                  {isDone(activeTask) ? "Mark incomplete" : "Complete"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteTask(activeTask.id)}
+                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-500"
+                  title="Delete"
+                >
+                  <Trash2 size={20} />
+                </button>
               </div>
             </div>
           </div>
         )}
-
-        <style>{`
-          .no-scrollbar::-webkit-scrollbar { display: none; }
-          .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-          @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-          @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-          .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
-          .animate-fade-in { animation: fadeIn 0.2s ease-out; }
-        `}</style>
       </div>
     </div>
   );
