@@ -733,7 +733,6 @@ export default function ChoreApp() {
               <h3 className="mb-4 text-[18px] font-semibold text-[var(--text)]">New chore</h3>
 
               <input
-                autoFocus
                 placeholder="What needs doing?"
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
