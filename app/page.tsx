@@ -1,13 +1,17 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, X, Check, Pencil, Trash2, StickyNote, Sparkles, Calendar, ChevronRight } from "lucide-react";
+import { Plus, X, Check, Trash2, StickyNote, Sparkles, Calendar, ChevronRight } from "lucide-react";
+import { motion, useMotionValue, useTransform, animate } from "framer-motion";
 
 const ROOMS = ["Kitchen", "Bathroom", "Living Room", "Bedroom", "Garden", "General"];
 
+// Fixed names — no longer editable in the UI.
+const NAMES = { you: "Tom", partner: "Rosie" };
+
 const ASSIGNEE_STYLE: Record<string, { bg: string; label: string }> = {
-  you: { bg: "bg-blue-500", label: "you" },
-  partner: { bg: "bg-indigo-500", label: "partner" },
-  both: { bg: "bg-amber-500", label: "both" },
+  you: { bg: "bg-blue-500", label: "Tom" },
+  partner: { bg: "bg-pink-500", label: "Rosie" },
+  both: { bg: "bg-amber-500", label: "Both" },
 };
 
 type Task = {
@@ -45,7 +49,7 @@ const seedTasks: Task[] = [
   { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null },
 ];
 
-// Shared state: persisted server-side via Vercel KV (see app/api/state/route.ts),
+// Shared state: persisted server-side via Supabase (see app/api/state/route.ts),
 // polled every few seconds so both phones stay in sync. Pass a `paused` ref
 // (true while a modal is open/typing) to avoid a poll clobbering an in-progress edit.
 function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefObject<boolean>) {
@@ -96,19 +100,113 @@ function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefO
   return [value, setValue] as const;
 }
 
+// A task row you can swipe left to delete (flashes red, slides off) or
+// swipe right to complete (flashes green, snaps back). Tapping it when it
+// hasn't moved opens the detail sheet.
+function SwipeableTaskRow({
+  task,
+  done,
+  onToggleDone,
+  onDelete,
+  onOpen,
+}: {
+  task: Task;
+  done: boolean;
+  onToggleDone: (id: number) => void;
+  onDelete: (id: number) => void;
+  onOpen: (task: Task) => void;
+}) {
+  const x = useMotionValue(0);
+  const greenOpacity = useTransform(x, [0, 90], [0, 1]);
+  const redOpacity = useTransform(x, [-90, 0], [1, 0]);
+  const THRESHOLD = 90;
+
+  function handleDragEnd(_e: unknown, info: { offset: { x: number } }) {
+    if (info.offset.x < -THRESHOLD) {
+      animate(x, -500, {
+        duration: 0.25,
+        ease: "easeIn",
+        onComplete: () => onDelete(task.id),
+      });
+    } else if (info.offset.x > THRESHOLD) {
+      onToggleDone(task.id);
+      animate(x, 0, { type: "spring", stiffness: 500, damping: 32 });
+    } else {
+      animate(x, 0, { type: "spring", stiffness: 500, damping: 32 });
+    }
+  }
+
+  return (
+    <motion.div layout="position" className="relative" style={{ touchAction: "pan-y" }}>
+      <motion.div
+        className="absolute inset-0 flex items-center px-5 bg-green-500"
+        style={{ opacity: greenOpacity }}
+      >
+        <Check size={20} color="white" strokeWidth={3} />
+      </motion.div>
+      <motion.div
+        className="absolute inset-0 flex items-center justify-end px-5 bg-red-500"
+        style={{ opacity: redOpacity }}
+      >
+        <Trash2 size={20} color="white" />
+      </motion.div>
+
+      <motion.div
+        drag="x"
+        dragElastic={0.15}
+        dragConstraints={{ left: 0, right: 0 }}
+        dragTransition={{ bounceStiffness: 500, bounceDamping: 32 }}
+        style={{ x }}
+        onDragEnd={handleDragEnd}
+        onClick={() => {
+          if (Math.abs(x.get()) < 5) onOpen(task);
+        }}
+        className={`relative z-10 flex items-center gap-3 bg-white px-3.5 py-3 cursor-grab active:cursor-grabbing transition-colors duration-200 ${
+          done ? "opacity-40 bg-black/[0.01]" : ""
+        }`}
+      >
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleDone(task.id);
+          }}
+          className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all duration-200 active:scale-90 ${
+            done ? "bg-blue-500 border-none shadow-sm" : "border-2 border-black/20 hover:border-black/40 bg-transparent"
+          }`}
+        >
+          {done && <Check size={14} color="white" strokeWidth={3.5} />}
+        </button>
+
+        <div className="flex-1 min-w-0 pr-1">
+          <p className={`text-[15px] font-medium leading-snug transition-all ${done ? "line-through text-black/60" : "text-[#1C1C1E]"}`}>
+            {task.title}
+          </p>
+        </div>
+
+        {task.notes && <StickyNote size={15} className="text-black/20 shrink-0" />}
+
+        <div
+          className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[10px] font-extrabold text-white shadow-sm ${ASSIGNEE_STYLE[task.assignee].bg}`}
+          title={ASSIGNEE_STYLE[task.assignee].label}
+        >
+          {task.assignee === "both" ? "B" : task.assignee === "you" ? "T" : "R"}
+        </div>
+
+        <ChevronRight size={14} className="text-black/20 shrink-0" />
+      </motion.div>
+    </motion.div>
+  );
+}
+
 export default function ChoreApp() {
   const [showAdd, setShowAdd] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
-  // Paused while either sheet is open, so an incoming poll never overwrites
-  // what you or your partner are actively typing.
   const pausedRef = useRef(false);
   useEffect(() => {
     pausedRef.current = showAdd || !!activeTask;
   }, [showAdd, activeTask]);
 
-  const [names, setNames] = useSharedState("names", { you: "You", partner: "Partner" }, pausedRef);
-  const [editingNames, setEditingNames] = useState(false);
   const [tasks, setTasks] = useSharedState<Task[]>("tasks", seedTasks, pausedRef);
   const [roomFilter, setRoomFilter] = useState("All");
   const [assigneeFilter, setAssigneeFilter] = useState("All");
@@ -156,7 +254,7 @@ export default function ChoreApp() {
 
   function deleteTask(id: number) {
     setTasks((ts) => ts.filter((t) => t.id !== id));
-    setActiveTask(null);
+    setActiveTask((a) => (a && a.id === id ? null : a));
   }
 
   function saveActiveTask(patch: Partial<Task>) {
@@ -207,29 +305,7 @@ export default function ChoreApp() {
           </div>
 
           <div className="flex items-center justify-between text-[13px]">
-            {editingNames ? (
-              <div className="flex items-center gap-1.5 bg-white/80 p-1 rounded-xl shadow-sm border border-black/5">
-                <input
-                  value={names.you}
-                  onChange={(e) => setNames((n) => ({ ...n, you: e.target.value }))}
-                  className="text-xs bg-black/5 rounded-lg px-2 py-1 w-16 text-[#1C1C1E] font-medium outline-none"
-                />
-                <span className="text-black/30">&amp;</span>
-                <input
-                  value={names.partner}
-                  onChange={(e) => setNames((n) => ({ ...n, partner: e.target.value }))}
-                  className="text-xs bg-black/5 rounded-lg px-2 py-1 w-16 text-[#1C1C1E] font-medium outline-none"
-                />
-                <button onClick={() => setEditingNames(false)} className="text-xs bg-blue-500 text-white font-semibold px-2 py-1 rounded-lg active:scale-95 transition-transform">
-                  Done
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setEditingNames(true)} className="flex items-center gap-1.5 text-black/50 font-medium hover:text-black/80 transition-colors py-1 group">
-                <span>{names.you} &amp; {names.partner}</span>
-                <Pencil size={11} className="opacity-60 group-hover:opacity-100" />
-              </button>
-            )}
+            <span className="text-black/50 font-medium py-1">{NAMES.you} &amp; {NAMES.partner}</span>
             <div className="flex items-center gap-1 text-[12px] font-semibold text-black/40 bg-black/[0.04] px-2.5 py-1 rounded-full">
               <Calendar size={12} />
               <span>Reset in {daysUntilReset()}d</span>
@@ -249,7 +325,7 @@ export default function ChoreApp() {
                     active ? "bg-white text-black shadow-[0_2px_8px_rgba(0,0,0,0.12)]" : "text-black/60 hover:text-black"
                   }`}
                 >
-                  {a === "All" ? "Everyone" : a === "you" ? names.you : a === "partner" ? names.partner : "Both"}
+                  {a === "All" ? "Everyone" : a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
                 </button>
               );
             })}
@@ -287,47 +363,16 @@ export default function ChoreApp() {
               <div key={room} className="space-y-1.5">
                 <h2 className="text-[12px] font-bold uppercase tracking-wider text-black/40 px-3">{room}</h2>
                 <div className="bg-white rounded-2xl overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-black/[0.04] divide-y divide-black/[0.04]">
-                  {items.map((t) => {
-                    const done = isDone(t);
-                    return (
-                      <div
-                        key={t.id}
-                        onClick={() => setActiveTask(t)}
-                        className={`group flex items-center gap-3 px-3.5 py-3 transition-all duration-200 active:bg-black/[0.03] cursor-pointer ${
-                          done ? "opacity-40 bg-black/[0.01]" : ""
-                        }`}
-                      >
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleDone(t.id);
-                          }}
-                          className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all duration-200 active:scale-90 ${
-                            done ? "bg-blue-500 border-none shadow-sm" : "border-2 border-black/20 hover:border-black/40 bg-transparent"
-                          }`}
-                        >
-                          {done && <Check size={14} color="white" strokeWidth={3.5} />}
-                        </button>
-
-                        <div className="flex-1 min-w-0 pr-1">
-                          <p className={`text-[15px] font-medium leading-snug transition-all ${done ? "line-through text-black/60" : "text-[#1C1C1E]"}`}>
-                            {t.title}
-                          </p>
-                        </div>
-
-                        {t.notes && <StickyNote size={15} className="text-black/20 shrink-0" />}
-
-                        <div
-                          className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[10px] font-extrabold text-white shadow-sm ${ASSIGNEE_STYLE[t.assignee].bg}`}
-                          title={ASSIGNEE_STYLE[t.assignee].label}
-                        >
-                          {t.assignee === "both" ? "B" : t.assignee === "you" ? names.you[0]?.toUpperCase() : names.partner[0]?.toUpperCase()}
-                        </div>
-
-                        <ChevronRight size={14} className="text-black/20 shrink-0" />
-                      </div>
-                    );
-                  })}
+                  {items.map((t) => (
+                    <SwipeableTaskRow
+                      key={t.id}
+                      task={t}
+                      done={isDone(t)}
+                      onToggleDone={toggleDone}
+                      onDelete={deleteTask}
+                      onOpen={setActiveTask}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
@@ -395,7 +440,7 @@ export default function ChoreApp() {
                             form.assignee === a ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
                           }`}
                         >
-                          {a === "you" ? names.you : a === "partner" ? names.partner : "Both"}
+                          {a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
                         </button>
                       ))}
                     </div>
@@ -448,7 +493,7 @@ export default function ChoreApp() {
                             activeTask.assignee === a ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
                           }`}
                         >
-                          {a === "you" ? names.you : a === "partner" ? names.partner : "Both"}
+                          {a === "you" ? NAMES.you : a === "partner" ? NAMES.partner : "Both"}
                         </button>
                       ))}
                     </div>
