@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { X, Trash2, StickyNote } from "lucide-react";
 
-const ROOMS = ["Kitchen", "Bathroom", "Living Room", "Bedroom", "Garden", "General"] as const;
+const ROOMS = ["Kitchen", "Bathroom", "Lounge", "Bedroom", "Garden", "General"] as const;
 const ROOM_CHIPS = ["All", ...ROOMS] as const;
 
 const NAMES = { you: "Tom", partner: "Rosie" } as const;
@@ -70,15 +70,24 @@ function daysUntilReset() {
 }
 
 const seedTasks: Task[] = [
-  { id: 1, title: "Hoover downstairs", room: "Living Room", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null, dueAt: dueAtFromOffset(0) },
+  { id: 1, title: "Hoover downstairs", room: "Lounge", assignee: "you", notes: "Don't forget under the sofa cushions.", completedAt: null, dueAt: dueAtFromOffset(0) },
   { id: 2, title: "Clean the hob", room: "Kitchen", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(1) },
   { id: 3, title: "Bins out", room: "General", assignee: "both", notes: "Recycling is fortnightly.", completedAt: null, dueAt: dueAtFromOffset(-1) },
   { id: 4, title: "Change bedsheets", room: "Bedroom", assignee: "you", notes: "", completedAt: Date.now(), dueAt: dueAtFromOffset(3) },
   { id: 5, title: "Water the plants", room: "Garden", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(2) },
   { id: 6, title: "Wipe bathroom mirror & sink", room: "Bathroom", assignee: "both", notes: "", completedAt: null, dueAt: dueAtFromOffset(-2) },
-  { id: 7, title: "Load the dishwasher", room: "Kitchen", assignee: "you", notes: "", completedAt: null, dueAt: dueAtFromOffset(0) },
-  { id: 8, title: "Tidy the sofa cushions", room: "Living Room", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(4) },
+  { id: 7, title: "Stack the dishwasher", room: "Kitchen", assignee: "you", notes: "", completedAt: null, dueAt: dueAtFromOffset(0) },
+  { id: 8, title: "Tidy the sofa cushions", room: "Lounge", assignee: "partner", notes: "", completedAt: null, dueAt: dueAtFromOffset(4) },
 ];
+
+/** Migrate older room/title strings from persisted state. */
+function normalizeTasks(tasks: Task[]): Task[] {
+  return tasks.map((t) => ({
+    ...t,
+    room: t.room === "Living Room" ? "Lounge" : t.room,
+    title: t.title === "Load the dishwasher" ? "Stack the dishwasher" : t.title,
+  }));
+}
 
 function useSharedState<T>(key: string, initial: T, pausedRef: React.MutableRefObject<boolean>) {
   const [value, setValue] = useState<T>(initial);
@@ -365,6 +374,14 @@ export default function ChoreApp() {
   }, [showAdd, activeTask]);
 
   const [tasks, setTasks] = useSharedState<Task[]>("tasks", seedTasks, pausedRef);
+
+  // One-shot migration for older persisted room/title strings.
+  useEffect(() => {
+    if (!tasks.some((t) => t.room === "Living Room" || t.title === "Load the dishwasher")) return;
+    setTasks(normalizeTasks(tasks));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
   const [roomFilter, setRoomFilter] = useState("All");
   const [personFilter, setPersonFilter] = useState<PersonFilter>("all");
   const [form, setForm] = useState({
@@ -498,12 +515,17 @@ export default function ChoreApp() {
           <div className="flex-1 overflow-y-auto pb-[120px]">
             {/* Header */}
             <div className="px-[22px] pb-[26px] pt-[58px]">
-              <div className="flex items-start justify-between">
-                <div className="text-[13px] font-semibold tracking-[0.02em] text-[var(--secondary)]">
-                  {NAMES.you} & {NAMES.partner}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                    {NAMES.you} & {NAMES.partner}
+                  </div>
+                  <h1 className="mt-[7px] text-[32px] font-bold tracking-[-0.025em] text-[var(--title)]">
+                    Jobs
+                  </h1>
                 </div>
                 <div
-                  className="rounded-full px-[11px] py-[6px] text-[11.5px] font-medium"
+                  className="mt-1 shrink-0 rounded-full px-[11px] py-[6px] text-[11.5px] font-medium"
                   style={{ background: "var(--pill)", color: "var(--reset-pill-text)" }}
                 >
                   Resets in {daysUntilReset()}d

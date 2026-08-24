@@ -17,6 +17,7 @@ body {
   --tab-idle: #e9ebef;
   --pill: #e4e7ec;
   --text: #14161a;
+  --title: #14161a;
   --secondary: #3b4048;
   --muted: #767d89;
   --dim: #9aa1ac;
@@ -60,6 +61,7 @@ body {
     --tab-idle: #1a1d22;
     --pill: rgba(255, 255, 255, 0.08);
     --text: #f2f3f5;
+    --title: #f6f7f9;
     --secondary: #c3c8d1;
     --muted: #8b9099;
     --dim: #6d737d;
@@ -103,6 +105,7 @@ html[data-theme="light"] {
   --tab-idle: #e9ebef;
   --pill: #e4e7ec;
   --text: #14161a;
+  --title: #14161a;
   --secondary: #3b4048;
   --muted: #767d89;
   --dim: #9aa1ac;
@@ -144,6 +147,7 @@ html[data-theme="dark"] {
   --tab-idle: #1a1d22;
   --pill: rgba(255, 255, 255, 0.08);
   --text: #f2f3f5;
+  --title: #f6f7f9;
   --secondary: #c3c8d1;
   --muted: #8b9099;
   --dim: #6d737d;
