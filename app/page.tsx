@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { X, Trash2, StickyNote } from "lucide-react";
+import { X, Trash2, StickyNote, Check } from "lucide-react";
+import { motion, useMotionValue, useTransform, animate } from "framer-motion";
 
 const ROOMS = ["Kitchen", "Bathroom", "Lounge", "Bedroom", "Garden", "General"] as const;
 const ROOM_CHIPS = ["All", ...ROOMS] as const;
@@ -278,6 +279,7 @@ function ChoreRow({
   days,
   onToggle,
   onCycle,
+  onDelete,
   onOpenNotes,
   compact,
 }: {
@@ -286,45 +288,34 @@ function ChoreRow({
   days: number;
   onToggle: () => void;
   onCycle: () => void;
+  onDelete?: () => void;
   onOpenNotes?: () => void;
   compact?: boolean;
 }) {
   const overdue = days < 0 && !done;
   const label = dueLabel(days, done);
+  const x = useMotionValue(0);
+  const greenOpacity = useTransform(x, [0, 170], [0, 1]);
+  const redOpacity = useTransform(x, [-170, 0], [1, 0]);
+  const THRESHOLD = 150;
 
-  if (compact) {
-    return (
-      <div className="flex items-center gap-3 py-[7px]">
-        <Checkbox done={done} overdue={overdue} onClick={onToggle} />
-        <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
-          <div
-            className="truncate text-[15px] font-medium"
-            style={{
-              color: done ? "var(--disabled)" : "var(--text)",
-              textDecoration: done ? "line-through" : "none",
-            }}
-          >
-            {task.title}
-          </div>
-          <div className="mt-[3px] text-[11.5px] font-normal" style={{ color: "var(--pink-label)" }}>
-            {label} · {task.room}
-          </div>
-        </button>
-        <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
-      </div>
-    );
+  function handleDragEnd(_e: unknown, info: { offset: { x: number } }) {
+    if (info.offset.x < -THRESHOLD && onDelete) {
+      animate(x, -500, {
+        duration: 0.25,
+        ease: "easeIn",
+        onComplete: () => onDelete(),
+      });
+    } else if (info.offset.x > THRESHOLD) {
+      onToggle();
+      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
+    } else {
+      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
+    }
   }
 
-  return (
-    <div
-      className="mb-2 flex min-h-[56px] items-center gap-[13px] rounded-2xl px-[15px] py-[13px]"
-      style={{
-        background: "var(--row)",
-        boxShadow: overdue
-          ? `inset 3px 0 0 ${ROSIE}, var(--card-shadow)`
-          : "var(--card-shadow)",
-      }}
-    >
+  const body = (
+    <>
       <Checkbox done={done} overdue={overdue} onClick={onToggle} />
       <button type="button" onClick={onToggle} className="min-w-0 flex-1 cursor-pointer text-left">
         <div
@@ -339,13 +330,19 @@ function ChoreRow({
         <div
           className="mt-[3px] text-[11.5px] font-normal"
           style={{
-            color: overdue ? ROSIE : done ? "var(--due-done)" : "var(--muted)",
+            color: compact
+              ? "var(--pink-label)"
+              : overdue
+                ? ROSIE
+                : done
+                  ? "var(--due-done)"
+                  : "var(--muted)",
           }}
         >
-          {label}
+          {compact ? `${label} · ${task.room}` : label}
         </div>
       </button>
-      {task.notes && onOpenNotes && (
+      {!compact && task.notes && onOpenNotes && (
         <button
           type="button"
           onClick={(e) => {
@@ -359,7 +356,46 @@ function ChoreRow({
         </button>
       )}
       <AvatarButton assignee={task.assignee} done={done} onClick={onCycle} />
-    </div>
+    </>
+  );
+
+  if (compact) {
+    return <div className="flex items-center gap-3 py-[7px]">{body}</div>;
+  }
+
+  return (
+    <motion.div layout="position" className="relative mb-2" style={{ touchAction: "pan-y" }}>
+      <motion.div
+        className="absolute inset-0 flex items-center rounded-2xl bg-green-500 px-5"
+        style={{ opacity: greenOpacity }}
+      >
+        <Check size={20} color="white" strokeWidth={3} />
+      </motion.div>
+      <motion.div
+        className="absolute inset-0 flex items-center justify-end rounded-2xl bg-red-500 px-5"
+        style={{ opacity: redOpacity }}
+      >
+        <Trash2 size={20} color="white" />
+      </motion.div>
+
+      <motion.div
+        drag="x"
+        dragElastic={0.85}
+        dragConstraints={{ left: -320, right: 320 }}
+        dragTransition={{ bounceStiffness: 300, bounceDamping: 26 }}
+        style={{
+          x,
+          background: "var(--row)",
+          boxShadow: overdue
+            ? `inset 3px 0 0 ${ROSIE}, var(--card-shadow)`
+            : "var(--card-shadow)",
+        }}
+        onDragEnd={handleDragEnd}
+        className="relative z-10 flex min-h-[56px] cursor-grab items-center gap-[13px] rounded-2xl px-[15px] py-[13px] active:cursor-grabbing"
+      >
+        {body}
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -646,6 +682,7 @@ export default function ChoreApp() {
                         days={daysUntilDue(t.dueAt)}
                         onToggle={() => toggleDone(t.id)}
                         onCycle={() => cycleAssignee(t.id)}
+                        onDelete={() => deleteTask(t.id)}
                         onOpenNotes={() => setActiveTask(t)}
                       />
                     ))}
