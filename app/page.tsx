@@ -11,7 +11,7 @@ const NAMES = { you: "Tom", partner: "Rosie" };
 const ASSIGNEE_STYLE: Record<string, { bg: string; label: string }> = {
   you: { bg: "bg-blue-500", label: "Tom" },
   partner: { bg: "bg-pink-500", label: "Rosie" },
-  both: { bg: "bg-amber-500", label: "Both" },
+  both: { bg: "bg-gradient-to-tr from-pink-500 to-blue-500", label: "Both" },
 };
 
 type Task = {
@@ -117,12 +117,13 @@ function SwipeableTaskRow({
   onOpen: (task: Task) => void;
 }) {
   const x = useMotionValue(0);
-  const greenOpacity = useTransform(x, [0, 90], [0, 1]);
-  const redOpacity = useTransform(x, [-90, 0], [1, 0]);
-  const THRESHOLD = 90;
+  const greenOpacity = useTransform(x, [0, 170], [0, 1]);
+  const redOpacity = useTransform(x, [-170, 0], [1, 0]);
+  const THRESHOLD = 150;
 
   function handleDragEnd(_e: unknown, info: { offset: { x: number } }) {
     if (info.offset.x < -THRESHOLD) {
+      // Delete: slide fully off screen, then remove from state.
       animate(x, -500, {
         duration: 0.25,
         ease: "easeIn",
@@ -130,14 +131,15 @@ function SwipeableTaskRow({
       });
     } else if (info.offset.x > THRESHOLD) {
       onToggleDone(task.id);
-      animate(x, 0, { type: "spring", stiffness: 500, damping: 32 });
+      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
     } else {
-      animate(x, 0, { type: "spring", stiffness: 500, damping: 32 });
+      animate(x, 0, { type: "spring", stiffness: 300, damping: 26 });
     }
   }
 
   return (
     <motion.div layout="position" className="relative" style={{ touchAction: "pan-y" }}>
+      {/* Reveal layers behind the row */}
       <motion.div
         className="absolute inset-0 flex items-center px-5 bg-green-500"
         style={{ opacity: greenOpacity }}
@@ -151,11 +153,12 @@ function SwipeableTaskRow({
         <Trash2 size={20} color="white" />
       </motion.div>
 
+      {/* Draggable foreground row */}
       <motion.div
         drag="x"
-        dragElastic={0.15}
-        dragConstraints={{ left: 0, right: 0 }}
-        dragTransition={{ bounceStiffness: 500, bounceDamping: 32 }}
+        dragElastic={0.85}
+        dragConstraints={{ left: -320, right: 320 }}
+        dragTransition={{ bounceStiffness: 300, bounceDamping: 26 }}
         style={{ x }}
         onDragEnd={handleDragEnd}
         onClick={() => {
