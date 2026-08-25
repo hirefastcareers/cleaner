@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { X, Trash2, StickyNote, Check } from "lucide-react";
 import { motion, useMotionValue, useTransform, animate } from "framer-motion";
 
-const ROOMS = ["Kitchen", "Bathroom", "Lounge", "Bedroom", "Garden", "General"] as const;
+const ROOMS = ["Kitchen", "Bathroom", "Lounge", "Bedroom", "Guest Bedroom", "Office", "Conservatory", "Hallway", "Garden", "General"] as const;
 const ROOM_CHIPS = ["All", ...ROOMS] as const;
 
 const NAMES = { you: "Tom", partner: "Rosie" } as const;
